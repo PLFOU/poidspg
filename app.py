@@ -284,47 +284,81 @@ if not df.empty:
     df['Moyenne 7 jours'] = df['Poids'].rolling(window=7, min_periods=1).mean()
     df_weekly = df.set_index('Date').resample('W-MON', label='left', closed='left')['Poids'].mean().reset_index()
     df_weekly.rename(columns={'Poids': 'Moyenne Hebdomadaire'}, inplace=True)
-    objective_df = pd.DataFrame({
-        'Date': [START_DATE, END_DATE],
-        'Poids': [START_WEIGHT, TARGET_WEIGHT],
-        'Légende': ['Objectif', 'Objectif']
-    })
 
     # --- Création du Graphique ---
     st.header("📈 Évolution et Tendances")
 
-    # Couches du graphique
-    base_chart = alt.Chart(df).encode(x=alt.X('Date:T', title='Date'))
+    # 1. Préparer les données dans un format "long" pour une légende automatique
+    # Poids journalier
+    df_poids = df[['Date', 'Poids']].copy()
+    df_poids.rename(columns={'Poids': 'Valeur'}, inplace=True)
+    df_poids['Légende'] = 'Poids Journalier'
 
-    poids_line = base_chart.mark_line(point=True, tooltip=True, color='#1f77b4').encode(
-        y=alt.Y('Poids:Q', title='Poids (kg)', scale=alt.Scale(zero=False)),
-        tooltip=[alt.Tooltip('Date:T', format='%A %d %B %Y'), alt.Tooltip('Poids:Q', format='.2f')]
-    )
-    
-    moyenne_7j_line = base_chart.mark_line(color='orange', strokeDash=[3, 3]).encode(
-        y=alt.Y('Moyenne 7 jours:Q'),
-        tooltip=[alt.Tooltip('Date:T', format='%A %d %B %Y'), alt.Tooltip('Moyenne 7 jours:Q', title='Moyenne 7j', format='.2f')]
-    )
-    
-    moyenne_hebdo_line = alt.Chart(df_weekly).mark_line(color='green', opacity=0.8).encode(
+    # Moyenne 7 jours (on retire les valeurs nulles pour un tracé propre)
+    df_moy7j = df[['Date', 'Moyenne 7 jours']].dropna().copy()
+    df_moy7j.rename(columns={'Moyenne 7 jours': 'Valeur'}, inplace=True)
+    df_moy7j['Légende'] = 'Moyenne 7 jours'
+
+    # Moyenne hebdomadaire
+    df_hebdo = df_weekly.copy()
+    df_hebdo.rename(columns={'Moyenne Hebdomadaire': 'Valeur'}, inplace=True)
+    df_hebdo['Légende'] = 'Moyenne Hebdomadaire'
+
+    # Ligne d'objectif
+    df_objectif = pd.DataFrame({
+        'Date': [START_DATE, END_DATE],
+        'Valeur': [START_WEIGHT, TARGET_WEIGHT]
+    })
+    df_objectif['Légende'] = 'Objectif'
+
+    # 2. Concaténer toutes les données dans un seul DataFrame
+    df_plot = pd.concat([df_poids, df_moy7j, df_hebdo, df_objectif])
+
+    # 3. Créer le graphique de base (lignes)
+    line_chart = alt.Chart(df_plot).mark_line(interpolate='monotone').encode(
+        x=alt.X('Date:T', title='Date'),
+        y=alt.Y('Valeur:Q', title='Poids (kg)', scale=alt.Scale(zero=False)),
+        color=alt.Color('Légende:N',
+            scale=alt.Scale(
+                domain=['Poids Journalier', 'Moyenne 7 jours', 'Moyenne Hebdomadaire', 'Objectif'],
+                range=['#1f77b4', 'orange', 'green', 'red']
+            ),
+            legend=alt.Legend(
+                title=None,
+                orient='top',
+                symbolSize=200,
+                labelFontSize=12
+            )
+        ),
+        strokeDash=alt.condition(
+            alt.FieldOneOfPredicate(field='Légende', oneOf=['Moyenne 7 jours', 'Moyenne Hebdomadaire']),
+            alt.value([5, 5]),
+            alt.value([0]),
+        ),
+        strokeWidth=alt.condition(
+            alt.datum.Légende == 'Objectif',
+            alt.value(3),
+            alt.value(2)
+        ),
+        tooltip=[
+            alt.Tooltip('Date:T', format='%A %d %B %Y'),
+            alt.Tooltip('Valeur:Q', title='Poids', format='.2f'),
+            'Légende:N'
+        ]
+    ).interactive()
+
+    # 4. Créer une couche séparée juste pour les points du poids journalier
+    points_chart = alt.Chart(df_poids).mark_point(filled=True, size=50, color='#1f77b4').encode(
         x='Date:T',
-        y=alt.Y('Moyenne Hebdomadaire:Q'),
-        tooltip=[alt.Tooltip('Date:T', format='Semaine du %d %B'), alt.Tooltip('Moyenne Hebdomadaire:Q', title='Moy. Hebdo', format='.2f')]
+        y=alt.Y('Valeur:Q'),
+        tooltip=[
+            alt.Tooltip('Date:T', format='%A %d %B %Y'),
+            alt.Tooltip('Valeur:Q', title='Poids', format='.2f')
+        ]
     )
 
-    objectif_line = alt.Chart(objective_df).mark_line(color='red', strokeWidth=2).encode(
-        x='Date:T',
-        y=alt.Y('Poids:Q'),
-        tooltip=[alt.Tooltip('Date:T', format='%d %B %Y'), alt.Tooltip('Poids:Q', title='Objectif', format='.2f')]
-    )
-
-    # Combinaison des couches
-    final_chart = alt.layer(
-        poids_line,
-        moyenne_7j_line,
-        moyenne_hebdo_line,
-        objectif_line
-    ).interactive().properties(
+    # 5. Combiner les lignes et les points, et ajouter un titre
+    final_chart = (line_chart + points_chart).properties(
         title="Évolution du Poids vs Objectifs et Moyennes",
         height=500
     )
