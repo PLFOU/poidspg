@@ -42,19 +42,21 @@ except Exception as e:
 def load_data():
     """Charge les données depuis la feuille Google Sheets."""
     try:
-        data = worksheet.get_all_records()
-        df = pd.DataFrame(data)
-        if df.empty:
+        # --- MODIFICATION IMPORTANTE ICI ---
+        # On utilise get_all_values() pour lire les données brutes sous forme de texte
+        # et éviter que gspread n'interprète mal les nombres.
+        values = worksheet.get_all_values()
+        if not values or len(values) < 2: # S'il n'y a pas de données ou seulement l'en-tête
             return pd.DataFrame(columns=["Date", "Poids"])
 
+        # On crée le DataFrame manuellement à partir des valeurs brutes
+        df = pd.DataFrame(values[1:], columns=values[0])
+        
         df = df.dropna(how="all")
         
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
         
-        # --- CORRECTION POUR LE FORMAT DE POIDS "00,00" ---
-        # 1. On s'assure que la colonne est une chaîne de caractères.
-        # 2. On remplace la virgule par un point.
-        # 3. On convertit en nombre.
+        # Cette correction fonctionnera maintenant à coup sûr car les données sont lues comme du texte
         df['Poids'] = pd.to_numeric(
             df['Poids'].astype(str).str.replace(',', '.', regex=False), 
             errors='coerce'
@@ -70,18 +72,12 @@ def load_data():
 def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
-        # On formate la date en jj/mm/aaaa pour la sauvegarde
         df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%d/%m/%Y')
-        
-        # --- CORRECTION POUR LA SAUVEGARDE AU FORMAT "00,00" ---
-        # 1. On formate le nombre avec 2 décimales.
-        # 2. On le transforme en chaîne de caractères.
-        # 3. On remplace le point par une virgule pour la cohérence dans Google Sheets.
         df_to_save['Poids'] = df_to_save['Poids'].map('{:.2f}'.format).str.replace('.', ',', regex=False)
         
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
-        st.cache_data.clear() # Vider le cache est crucial après une sauvegarde
+        st.cache_data.clear()
     except Exception as e:
         st.error(f"Erreur lors de la sauvegarde des données : {e}")
 
