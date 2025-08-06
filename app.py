@@ -28,7 +28,7 @@ creds = Credentials.from_service_account_info(
 client = gspread.authorize(creds)
 
 # Nom de votre feuille Google Sheets et de l'onglet
-SHEET_NAME = "Suivi Poids" #  <-- METTEZ ICI LE NOM DE VOTRE FICHIER GOOGLE SHEETS
+SHEET_NAME = "Suivi poids" #  <-- METTEZ ICI LE NOM DE VOTRE FICHIER GOOGLE SHEETS
 WORKSHEET_NAME = "Feuille 1" # <-- METTEZ ICI LE NOM DE L'ONGLET
 
 # Ouvre la feuille de calcul
