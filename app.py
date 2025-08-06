@@ -50,8 +50,13 @@ def load_data():
             return pd.DataFrame(columns=["Date", "Poids"])
 
         df = df.dropna(how="all")
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        
+        # On spécifie le format de date exact : jour/mois/année
+        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
+        
+        # On s'assure que le poids est bien un nombre
         df['Poids'] = pd.to_numeric(df['Poids'], errors='coerce')
+        
         df = df.dropna(subset=['Date', 'Poids'])
         df = df.sort_values(by='Date').reset_index(drop=True)
         return df
@@ -63,7 +68,7 @@ def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
         # Formate la date pour la sauvegarde
-        df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%Y-%m-%d')
+        df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%d/%m/%Y')
         # Efface la feuille et la réécrit
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
@@ -76,7 +81,7 @@ st.title("🏋️ Dashboard de Suivi de Poids")
 
 df = load_data()
 
-if not df.empty:
+if df is not None and not df.empty:
     st.sidebar.header("📝 Ajouter une nouvelle pesée")
     last_date = df['Date'].max().date()
     default_new_date = last_date + pd.Timedelta(days=1)
