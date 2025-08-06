@@ -6,9 +6,6 @@ import gspread
 from gspread_dataframe import set_with_dataframe
 from google.oauth2.service_account import Credentials
 import io
-# Nouveaux imports pour Firebase
-import firebase_admin
-from firebase_admin import credentials, storage
 
 # --- Configuration de la Page ---
 st.set_page_config(
@@ -23,21 +20,12 @@ END_DATE = pd.to_datetime("2025-08-31")
 START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
-# --- Authentification Google Sheets ---
-scopes_gsheets = ["https://www.googleapis.com/auth/spreadsheets"]
-creds_gsheets = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"], scopes=scopes_gsheets
+# --- Authentification (uniquement pour Google Sheets) ---
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"], scopes=scopes
 )
-gsheets_client = gspread.authorize(creds_gsheets)
-
-# --- Initialisation de Firebase (une seule fois) ---
-try:
-    firebase_admin.get_app()
-except ValueError:
-    cred_firebase = credentials.Certificate(dict(st.secrets["firebase_service_account"]))
-    firebase_admin.initialize_app(cred_firebase, {
-        'storageBucket': st.secrets["firebase_service_account"]["storage_bucket"]
-    })
+gsheets_client = gspread.authorize(creds)
 
 # --- Connexion à Google Sheets ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1J8sfnafYbCUHmgGZML4DTs02rq_vc0J9nHetcvISYRg/edit?gid=0#gid=0" 
@@ -49,20 +37,6 @@ try:
 except Exception as e:
     st.error(f"Impossible d'ouvrir la feuille de calcul. Vérifiez l'URL et les permissions de partage. Erreur : {e}")
     st.stop()
-
-# --- Fonctions pour Firebase Storage ---
-def upload_photo_to_firebase(photo_data):
-    """Téléverse une photo sur Firebase Storage."""
-    photo_data.seek(0)
-    bucket = storage.bucket()
-    
-    # Créer un nom de dossier basé sur la date du jour
-    folder_name = datetime.now().strftime('%Y-%m-%d')
-    file_name = f"{folder_name}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
-    
-    blob = bucket.blob(file_name)
-    blob.upload_from_file(photo_data, content_type='image/jpeg')
-    return file_name
 
 # --- Fonctions pour Google Sheets ---
 @st.cache_data(ttl=60)
@@ -98,11 +72,13 @@ def save_data(df_to_save):
     except Exception as e:
         st.error(f"Erreur lors de la sauvegarde des données Sheets : {e}")
 
-# --- Création des onglets ---
-tab1, tab2 = st.tabs(["📊 Dashboard Suivi de Poids", "📸 Ajouter une Photo"])
+# --- Navigation ---
+st.sidebar.title("Navigation")
+page = st.sidebar.radio("Choisissez une page :", ["📊 Dashboard", "📸 Ajouter une Photo"])
 
-# --- Contenu de l'Onglet 1 : Dashboard ---
-with tab1:
+# --- Affichage de la page sélectionnée ---
+if page == "📊 Dashboard":
+    st.title("📊 Dashboard Suivi de Poids")
     df = load_data()
 
     if df is not None and not df.empty:
@@ -140,17 +116,28 @@ with tab1:
             col1.metric(label="Poids Actuel", value=f"{latest_weight:.2f} kg", delta=f"{latest_weight - previous_weight:.2f} kg")
             col2.metric(label="Poids de Départ", value=f"{starting_weight_actual:.2f} kg")
             col3.metric(label="✅ Poids Perdu", value=f"{weight_lost:.2f} kg")
-            col4.metric(label="� À Perdre (Objectif 70kg)", value=f"{weight_to_target:.2f} kg")
+            col4.metric(label="🎯 À Perdre (Objectif 70kg)", value=f"{weight_to_target:.2f} kg")
 
         st.header("📈 Évolution et Tendances")
         df['Moyenne 7 jours'] = df['Poids'].rolling(window=7, min_periods=1).mean()
         df_weekly = df.set_index('Date').resample('W-MON', label='left', closed='left')['Poids'].mean().reset_index()
         df_weekly.rename(columns={'Poids': 'Moyenne Hebdomadaire'}, inplace=True)
         
-        df_poids = df[['Date', 'Poids']].copy(); df_poids.rename(columns={'Poids': 'Valeur'}, inplace=True); df_poids['Légende'] = 'Poids Journalier'
-        df_moy7j = df[['Date', 'Moyenne 7 jours']].dropna().copy(); df_moy7j.rename(columns={'Moyenne 7 jours': 'Valeur'}, inplace=True); df_moy7j['Légende'] = 'Moyenne 7 jours'
-        df_hebdo = df_weekly.copy(); df_hebdo.rename(columns={'Moyenne Hebdomadaire': 'Valeur'}, inplace=True); df_hebdo['Légende'] = 'Moyenne Hebdomadaire'
-        df_objectif = pd.DataFrame({'Date': [START_DATE, END_DATE], 'Valeur': [START_WEIGHT, TARGET_WEIGHT]}); df_objectif['Légende'] = 'Objectif'
+        # Préparation des données pour le graphique (format plus lisible)
+        df_poids = df[['Date', 'Poids']].copy()
+        df_poids.rename(columns={'Poids': 'Valeur'}, inplace=True)
+        df_poids['Légende'] = 'Poids Journalier'
+
+        df_moy7j = df[['Date', 'Moyenne 7 jours']].dropna().copy()
+        df_moy7j.rename(columns={'Moyenne 7 jours': 'Valeur'}, inplace=True)
+        df_moy7j['Légende'] = 'Moyenne 7 jours'
+
+        df_hebdo = df_weekly.copy()
+        df_hebdo.rename(columns={'Moyenne Hebdomadaire': 'Valeur'}, inplace=True)
+        df_hebdo['Légende'] = 'Moyenne Hebdomadaire'
+        
+        df_objectif = pd.DataFrame({'Date': [START_DATE, END_DATE], 'Valeur': [START_WEIGHT, TARGET_WEIGHT]})
+        df_objectif['Légende'] = 'Objectif'
 
         df_plot = pd.concat([df_poids, df_moy7j, df_hebdo, df_objectif])
 
@@ -178,19 +165,23 @@ with tab1:
         st.warning("Aucune donnée chargée depuis Google Sheets. Vérifiez que la feuille contient des données et que les permissions de partage sont correctes.")
 
 
-# --- Contenu de l'Onglet 2 : Photo ---
-with tab2:
-    st.header("📷 Prenez une photo")
+elif page == "📸 Ajouter une Photo":
+    st.title("📸 Ajouter une Photo")
     
-    picture = st.camera_input("Prenez une photo pour immortaliser votre progrès :")
+    st.write("Utilisez l'appareil photo de votre téléphone pour immortaliser votre progrès.")
+    
+    picture = st.camera_input("Prenez une photo :")
 
     if picture:
         st.image(picture, caption="Photo capturée.")
         
-        if st.button("Valider et Enregistrer sur Firebase"):
-            with st.spinner("Enregistrement en cours sur Firebase Storage..."):
-                try:
-                    file_name = upload_photo_to_firebase(picture)
-                    st.success(f"Photo enregistrée avec succès sur Firebase sous le nom : {file_name}")
-                except Exception as e:
-                    st.error(f"Une erreur est survenue lors de l'enregistrement sur Firebase : {e}")
+        # Générer un nom de fichier unique basé sur la date et l'heure
+        file_name = f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.jpg"
+        
+        # Afficher le bouton de téléchargement
+        st.download_button(
+            label="Télécharger la photo sur mon téléphone",
+            data=picture,
+            file_name=file_name,
+            mime="image/jpeg"
+        )
