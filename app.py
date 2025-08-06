@@ -24,9 +24,8 @@ START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
 # --- MODIFIABLE : ID du dossier parent dans Google Drive ---
-# Laissez cette variable vide ('') pour enregistrer à la racine,
-# ou mettez l'ID du dossier que vous avez partagé avec le compte de service.
-PARENT_FOLDER_ID = "1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG" # Ex: "1aBcDeFgHiJkLmNoPqRsTuVwXyZ..."
+# L'ID du dossier que vous avez partagé avec le compte de service.
+PARENT_FOLDER_ID = "1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG" 
 
 # --- Authentification ---
 # Définir les permissions nécessaires (Sheets ET Drive)
@@ -50,33 +49,16 @@ except Exception as e:
     st.stop()
 
 # --- Fonctions pour Google Drive ---
-@st.cache_data(ttl=600)
-def find_or_create_folder_id(folder_name, parent_id=None):
-    """Trouve un dossier par son nom et le crée s'il n'existe pas."""
-    query = f"name='{folder_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    response = drive_service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-    files = response.get('files', [])
-    
-    if files:
-        return files[0].get('id')
-    else:
-        file_metadata = {
-            'name': folder_name,
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
-        if parent_id:
-            file_metadata['parents'] = [parent_id]
+def upload_photo(photo_data, parent_folder_id):
+    """Téléverse une photo directement dans le dossier parent."""
+    if not parent_folder_id:
+        raise ValueError("L'ID du dossier parent (PARENT_FOLDER_ID) ne peut pas être vide.")
         
-        folder = drive_service.files().create(body=file_metadata, fields='id').execute()
-        return folder.get('id')
-
-def upload_photo(photo_data, folder_id):
-    """Téléverse une photo dans un dossier Google Drive spécifique."""
     photo_data.seek(0) # Revenir au début du fichier en mémoire
     file_name = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
     file_metadata = {
         'name': file_name,
-        'parents': [folder_id]
+        'parents': [parent_folder_id] # On utilise directement l'ID du dossier parent
     }
     media = MediaIoBaseUpload(photo_data, mimetype='image/jpeg', resumable=True)
     file = drive_service.files().create(body=file_metadata,
@@ -201,24 +183,21 @@ with tab1:
 with tab2:
     st.header("📷 Prenez une photo")
     
-    picture = st.camera_input("Prenez une photo pour immortaliser votre progrès :")
+    # S'assurer que l'ID du dossier parent est défini
+    if not PARENT_FOLDER_ID:
+        st.error("Veuillez définir l'ID du dossier parent (PARENT_FOLDER_ID) dans le code pour pouvoir enregistrer des photos.")
+    else:
+        picture = st.camera_input("Prenez une photo pour immortaliser votre progrès :")
 
-    if picture:
-        st.image(picture, caption="Photo capturée. Prêt à enregistrer ?")
-        
-        if st.button("Valider et Enregistrer la Photo"):
-            with st.spinner("Enregistrement en cours sur Google Drive..."):
-                try:
-                    # Créer un nom de dossier basé sur la date du jour
-                    today_str = datetime.now().strftime('%Y-%m-%d')
-                    folder_name = f"{today_str} poids"
-                    
-                    # Trouver ou créer le dossier journalier
-                    folder_id = find_or_create_folder_id(folder_name, PARENT_FOLDER_ID)
-                    
-                    # Téléverser la photo
-                    file_id = upload_photo(picture, folder_id)
-                    st.success(f"Photo enregistrée avec succès dans le dossier '{folder_name}' sur Google Drive !")
-                    
-                except Exception as e:
-                    st.error(f"Une erreur est survenue lors de l'enregistrement sur Google Drive : {e}")
+        if picture:
+            st.image(picture, caption="Photo capturée. Prêt à enregistrer ?")
+            
+            if st.button("Valider et Enregistrer la Photo"):
+                with st.spinner("Enregistrement en cours sur Google Drive..."):
+                    try:
+                        # Téléverser la photo directement dans le dossier parent
+                        file_id = upload_photo(picture, PARENT_FOLDER_ID)
+                        st.success(f"Photo enregistrée avec succès dans votre dossier Google Drive !")
+                        
+                    except Exception as e:
+                        st.error(f"Une erreur est survenue lors de l'enregistrement sur Google Drive : {e}")
