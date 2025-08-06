@@ -5,10 +5,10 @@ from datetime import datetime
 import gspread
 from gspread_dataframe import set_with_dataframe
 from google.oauth2.service_account import Credentials
-# Imports pour Google Drive
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 import io
+# Nouveaux imports pour Firebase
+import firebase_admin
+from firebase_admin import credentials, storage
 
 # --- Configuration de la Page ---
 st.set_page_config(
@@ -23,19 +23,21 @@ END_DATE = pd.to_datetime("2025-08-31")
 START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
-# --- ID du dossier parent dans Google Drive ---
-# L'ID du dossier "Poids_suivi" que vous avez partagé avec le compte de service.
-PARENT_FOLDER_ID = "1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG" 
-
-# --- Authentification ---
-# Définir les permissions nécessaires (Sheets ET Drive)
-scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"], scopes=scopes
+# --- Authentification Google Sheets ---
+scopes_gsheets = ["https://www.googleapis.com/auth/spreadsheets"]
+creds_gsheets = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"], scopes=scopes_gsheets
 )
-# Autoriser les deux services
-gsheets_client = gspread.authorize(creds)
-drive_service = build('drive', 'v3', credentials=creds)
+gsheets_client = gspread.authorize(creds_gsheets)
+
+# --- Initialisation de Firebase (une seule fois) ---
+try:
+    firebase_admin.get_app()
+except ValueError:
+    cred_firebase = credentials.Certificate(dict(st.secrets["firebase_service_account"]))
+    firebase_admin.initialize_app(cred_firebase, {
+        'storageBucket': st.secrets["firebase_service_account"]["storage_bucket"]
+    })
 
 # --- Connexion à Google Sheets ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1J8sfnafYbCUHmgGZML4DTs02rq_vc0J9nHetcvISYRg/edit?gid=0#gid=0" 
@@ -48,30 +50,19 @@ except Exception as e:
     st.error(f"Impossible d'ouvrir la feuille de calcul. Vérifiez l'URL et les permissions de partage. Erreur : {e}")
     st.stop()
 
-# --- Fonctions pour Google Drive ---
-def upload_photo(photo_data, parent_folder_id):
-    """Téléverse une photo directement dans le dossier parent."""
-    if not parent_folder_id:
-        raise ValueError("L'ID du dossier parent (PARENT_FOLDER_ID) ne peut pas être vide.")
-        
+# --- Fonctions pour Firebase Storage ---
+def upload_photo_to_firebase(photo_data):
+    """Téléverse une photo sur Firebase Storage."""
     photo_data.seek(0)
-    file_name = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
-    file_metadata = {
-        'name': file_name,
-        'parents': [parent_folder_id]
-    }
-    media = MediaIoBaseUpload(photo_data, mimetype='image/jpeg', resumable=True)
+    bucket = storage.bucket()
     
-    # --- MODIFICATION ICI ---
-    # On ajoute "supportsAllDrives=True" pour forcer l'API à être plus flexible
-    # sur la gestion de la propriété des fichiers, même sur un Drive personnel.
-    file = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id',
-        supportsAllDrives=True  # Ajout de ce paramètre
-    ).execute()
-    return file.get('id')
+    # Créer un nom de dossier basé sur la date du jour
+    folder_name = datetime.now().strftime('%Y-%m-%d')
+    file_name = f"{folder_name}/{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
+    
+    blob = bucket.blob(file_name)
+    blob.upload_from_file(photo_data, content_type='image/jpeg')
+    return file_name
 
 # --- Fonctions pour Google Sheets ---
 @st.cache_data(ttl=60)
@@ -149,7 +140,7 @@ with tab1:
             col1.metric(label="Poids Actuel", value=f"{latest_weight:.2f} kg", delta=f"{latest_weight - previous_weight:.2f} kg")
             col2.metric(label="Poids de Départ", value=f"{starting_weight_actual:.2f} kg")
             col3.metric(label="✅ Poids Perdu", value=f"{weight_lost:.2f} kg")
-            col4.metric(label="🎯 À Perdre (Objectif 70kg)", value=f"{weight_to_target:.2f} kg")
+            col4.metric(label="� À Perdre (Objectif 70kg)", value=f"{weight_to_target:.2f} kg")
 
         st.header("📈 Évolution et Tendances")
         df['Moyenne 7 jours'] = df['Poids'].rolling(window=7, min_periods=1).mean()
@@ -191,19 +182,16 @@ with tab1:
 with tab2:
     st.header("📷 Prenez une photo")
     
-    if not PARENT_FOLDER_ID:
-        st.error("Veuillez définir l'ID du dossier parent (PARENT_FOLDER_ID) dans le code pour pouvoir enregistrer des photos.")
-    else:
-        picture = st.camera_input("Prenez une photo pour immortaliser votre progrès :")
+    picture = st.camera_input("Prenez une photo pour immortaliser votre progrès :")
 
-        if picture:
-            st.image(picture, caption="Photo capturée. Prêt à enregistrer ?")
-            
-            if st.button("Valider et Enregistrer la Photo"):
-                with st.spinner("Enregistrement en cours sur Google Drive..."):
-                    try:
-                        file_id = upload_photo(picture, PARENT_FOLDER_ID)
-                        st.success(f"Photo enregistrée avec succès dans votre dossier Google Drive !")
-                        
-                    except Exception as e:
-                        st.error(f"Une erreur est survenue lors de l'enregistrement sur Google Drive : {e}")
+    if picture:
+        st.image(picture, caption="Photo capturée.")
+        
+        if st.button("Valider et Enregistrer sur Firebase"):
+            with st.spinner("Enregistrement en cours sur Firebase Storage..."):
+                try:
+                    file_name = upload_photo_to_firebase(picture)
+                    st.success(f"Photo enregistrée avec succès sur Firebase sous le nom : {file_name}")
+                except Exception as e:
+                    st.error(f"Une erreur est survenue lors de l'enregistrement sur Firebase : {e}")
+�
