@@ -5,7 +5,7 @@ from datetime import datetime
 import gspread
 from gspread_dataframe import set_with_dataframe
 from google.oauth2.service_account import Credentials
-# Nouveaux imports pour Google Drive
+# Imports pour Google Drive
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
@@ -23,8 +23,8 @@ END_DATE = pd.to_datetime("2025-08-31")
 START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
-# --- MODIFIABLE : ID du dossier parent dans Google Drive ---
-# L'ID du dossier que vous avez partagé avec le compte de service.
+# --- ID du dossier parent dans Google Drive ---
+# L'ID du dossier "Poids_suivi" que vous avez partagé avec le compte de service.
 PARENT_FOLDER_ID = "1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG" 
 
 # --- Authentification ---
@@ -71,16 +71,24 @@ def upload_photo(photo_data, parent_folder_id):
 def load_data():
     """Charge les données depuis la feuille Google Sheets."""
     try:
+        # On lit les données brutes pour éviter une mauvaise interprétation des nombres par gspread
         values = worksheet.get_all_values()
-        if not values or len(values) < 2:
+        if not values or len(values) < 2: # S'il n'y a pas de données ou seulement l'en-tête
             return pd.DataFrame(columns=["Date", "Poids"])
+
+        # On crée le DataFrame manuellement à partir des valeurs brutes
         df = pd.DataFrame(values[1:], columns=values[0])
+        
         df = df.dropna(how="all")
+        
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
+        
+        # On remplace la virgule par un point pour une conversion numérique correcte
         df['Poids'] = pd.to_numeric(
             df['Poids'].astype(str).str.replace(',', '.', regex=False), 
             errors='coerce'
         )
+        
         df = df.dropna(subset=['Date', 'Poids'])
         df = df.sort_values(by='Date').reset_index(drop=True)
         return df
@@ -92,7 +100,9 @@ def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
         df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%d/%m/%Y')
+        # On formate le poids avec une virgule pour la sauvegarde
         df_to_save['Poids'] = df_to_save['Poids'].map('{:.2f}'.format).str.replace('.', ',', regex=False)
+        
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
         st.cache_data.clear()
