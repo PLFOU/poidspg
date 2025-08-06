@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from gspread_dataframe import set_with_dataframe
+from google.oauth2.service_account import Credentials
 
 # --- Configuration de la Page ---
 st.set_page_config(
@@ -11,103 +13,104 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- Constantes et Configuration ---
+# --- Constantes ---
 START_DATE = pd.to_datetime("2025-02-07")
 END_DATE = pd.to_datetime("2025-08-31")
 START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
-# --- Connexion à Google Sheets ---
-# Crée la connexion en utilisant les informations stockées dans les Secrets de Streamlit
-conn = st.connection("gsheets", type=GSheetsConnection)
+# --- Authentification à Google Sheets ---
+# Utilise st.secrets pour une connexion sécurisée
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"], scopes=scopes
+)
+client = gspread.authorize(creds)
+
+# Nom de votre feuille Google Sheets et de l'onglet
+SHEET_NAME = "Suivi Poids" #  <-- METTEZ ICI LE NOM DE VOTRE FICHIER GOOGLE SHEETS
+WORKSHEET_NAME = "Feuille 1" # <-- METTEZ ICI LE NOM DE L'ONGLET
+
+# Ouvre la feuille de calcul
+spreadsheet = client.open(SHEET_NAME)
+worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
 
 # --- Fonctions ---
-@st.cache_data(ttl=60) # Mettre en cache les données pendant 60 secondes pour éviter les appels API excessifs
+@st.cache_data(ttl=60)
 def load_data():
     """Charge les données depuis la feuille Google Sheets."""
     try:
-        # Assurez-vous que le nom de votre feuille (worksheet) est correct. Par défaut, c'est "Feuille 1".
-        df = conn.read(worksheet="Feuille 1", usecols=[0, 1], ttl=5)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        if df.empty:
+            return pd.DataFrame(columns=["Date", "Poids"])
+
         df = df.dropna(how="all")
-        
-        # Convertir les colonnes aux bons formats, en ignorant les erreurs pour plus de robustesse
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df['Poids'] = pd.to_numeric(df['Poids'], errors='coerce')
-        
-        # Supprimer les lignes où la conversion a échoué
         df = df.dropna(subset=['Date', 'Poids'])
         df = df.sort_values(by='Date').reset_index(drop=True)
         return df
     except Exception as e:
-        st.error(f"Erreur lors du chargement des données depuis Google Sheets : {e}")
+        st.error(f"Erreur lors du chargement des données : {e}")
         return pd.DataFrame(columns=["Date", "Poids"])
 
 def save_data(df_to_save):
-    """Met à jour la feuille Google Sheets avec le nouveau DataFrame."""
+    """Met à jour la feuille Google Sheets."""
     try:
-        # Formater les colonnes avant de sauvegarder pour assurer la compatibilité avec Google Sheets
-        df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%Y-%m-%d')
-        conn.update(worksheet="Feuille 1", data=df_to_save)
-        # Vider le cache après une sauvegarde pour forcer le rechargement des données fraîches
+        # Efface la feuille et la réécrit
+        worksheet.clear()
+        set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
         st.cache_data.clear()
     except Exception as e:
-        st.error(f"Erreur lors de la sauvegarde des données vers Google Sheets : {e}")
+        st.error(f"Erreur lors de la sauvegarde des données : {e}")
 
-
-# --- Interface Utilisateur ---
+# --- Interface Utilisateur (le reste du code est identique) ---
 st.title("🏋️ Dashboard de Suivi de Poids")
 
 df = load_data()
 
 if not df.empty:
-    # --- Barre Latérale pour l'ajout de données ---
     st.sidebar.header("📝 Ajouter une nouvelle pesée")
     last_date = df['Date'].max().date()
     default_new_date = last_date + pd.Timedelta(days=1)
-    
+
     new_date = st.sidebar.date_input("Date", value=default_new_date)
     new_weight = st.sidebar.number_input("Poids (kg)", min_value=0.0, step=0.1, format="%.2f")
 
     if st.sidebar.button("💾 Enregistrer"):
         new_date_dt = pd.to_datetime(new_date)
-        
-        # Vérifier si la date existe déjà pour la mettre à jour
+
         if new_date_dt in df['Date'].values:
             st.sidebar.warning("Une entrée existe déjà pour cette date. Elle sera mise à jour.")
             df.loc[df['Date'] == new_date_dt, 'Poids'] = new_weight
-        else: # Sinon, ajouter une nouvelle ligne
+        else:
             new_entry = pd.DataFrame([{'Date': new_date_dt, 'Poids': new_weight}])
             df = pd.concat([df, new_entry], ignore_index=True)
-        
+
         df_sorted = df.sort_values(by='Date').reset_index(drop=True)
         save_data(df_sorted)
         st.sidebar.success("Poids enregistré sur Google Sheets !")
         st.rerun()
 
-    # --- Affichage des métriques clés ---
     st.header("📊 Statistiques Clés")
-    
+
     if len(df) > 1:
         col1, col2, col3, col4 = st.columns(4)
-        
         latest_weight = df['Poids'].iloc[-1]
         previous_weight = df['Poids'].iloc[-2]
         starting_weight_actual = df['Poids'].iloc[0]
         weight_lost = starting_weight_actual - latest_weight
         weight_to_target = latest_weight - TARGET_WEIGHT
-
         col1.metric(label="Poids Actuel", value=f"{latest_weight:.2f} kg", delta=f"{latest_weight - previous_weight:.2f} kg")
         col2.metric(label="Poids de Départ", value=f"{starting_weight_actual:.2f} kg")
         col3.metric(label="✅ Poids Perdu", value=f"{weight_lost:.2f} kg")
         col4.metric(label="🎯 À Perdre (Objectif 70kg)", value=f"{weight_to_target:.2f} kg")
 
-    # --- Calculs pour le graphique ---
+    st.header("📈 Évolution et Tendances")
     df['Moyenne 7 jours'] = df['Poids'].rolling(window=7, min_periods=1).mean()
     df_weekly = df.set_index('Date').resample('W-MON', label='left', closed='left')['Poids'].mean().reset_index()
     df_weekly.rename(columns={'Poids': 'Moyenne Hebdomadaire'}, inplace=True)
-
-    # --- Création du Graphique ---
-    st.header("📈 Évolution et Tendances")
 
     df_poids = df[['Date', 'Poids']].copy()
     df_poids.rename(columns={'Poids': 'Valeur'}, inplace=True)
@@ -121,10 +124,7 @@ if not df.empty:
     df_hebdo.rename(columns={'Moyenne Hebdomadaire': 'Valeur'}, inplace=True)
     df_hebdo['Légende'] = 'Moyenne Hebdomadaire'
 
-    df_objectif = pd.DataFrame({
-        'Date': [START_DATE, END_DATE],
-        'Valeur': [START_WEIGHT, TARGET_WEIGHT]
-    })
+    df_objectif = pd.DataFrame({'Date': [START_DATE, END_DATE], 'Valeur': [START_WEIGHT, TARGET_WEIGHT]})
     df_objectif['Légende'] = 'Objectif'
 
     df_plot = pd.concat([df_poids, df_moy7j, df_hebdo, df_objectif])
@@ -132,53 +132,22 @@ if not df.empty:
     line_chart = alt.Chart(df_plot).mark_line(interpolate='monotone').encode(
         x=alt.X('Date:T', title='Date'),
         y=alt.Y('Valeur:Q', title='Poids (kg)', scale=alt.Scale(zero=False)),
-        color=alt.Color('Légende:N',
-            scale=alt.Scale(
-                domain=['Poids Journalier', 'Moyenne 7 jours', 'Moyenne Hebdomadaire', 'Objectif'],
-                range=['#1f77b4', 'orange', 'green', 'red']
-            ),
-            legend=alt.Legend(
-                title=None,
-                orient='top',
-                symbolSize=200,
-                labelFontSize=12
-            )
-        ),
-        strokeDash=alt.condition(
-            alt.FieldOneOfPredicate(field='Légende', oneOf=['Moyenne 7 jours', 'Moyenne Hebdomadaire']),
-            alt.value([5, 5]),
-            alt.value([0]),
-        ),
-        strokeWidth=alt.condition(
-            alt.datum.Légende == 'Objectif',
-            alt.value(3),
-            alt.value(2)
-        ),
-        tooltip=[
-            alt.Tooltip('Date:T', format='%A %d %B %Y'),
-            alt.Tooltip('Valeur:Q', title='Poids', format='.2f'),
-            'Légende:N'
-        ]
+        color=alt.Color('Légende:N', scale=alt.Scale(domain=['Poids Journalier', 'Moyenne 7 jours', 'Moyenne Hebdomadaire', 'Objectif'], range=['#1f77b4', 'orange', 'green', 'red']), legend=alt.Legend(title=None, orient='top', symbolSize=200, labelFontSize=12)),
+        strokeDash=alt.condition(alt.FieldOneOfPredicate(field='Légende', oneOf=['Moyenne 7 jours', 'Moyenne Hebdomadaire']), alt.value([5, 5]), alt.value([0])),
+        strokeWidth=alt.condition(alt.datum.Légende == 'Objectif', alt.value(3), alt.value(2)),
+        tooltip=[alt.Tooltip('Date:T', format='%A %d %B %Y'), alt.Tooltip('Valeur:Q', title='Poids', format='.2f'), 'Légende:N']
     ).interactive()
 
     points_chart = alt.Chart(df_poids).mark_point(filled=True, size=50, color='#1f77b4').encode(
         x='Date:T',
         y=alt.Y('Valeur:Q'),
-        tooltip=[
-            alt.Tooltip('Date:T', format='%A %d %B %Y'),
-            alt.Tooltip('Valeur:Q', title='Poids', format='.2f')
-        ]
+        tooltip=[alt.Tooltip('Date:T', format='%A %d %B %Y'), alt.Tooltip('Valeur:Q', title='Poids', format='.2f')]
     )
 
-    final_chart = (line_chart + points_chart).properties(
-        title="Évolution du Poids vs Objectifs et Moyennes",
-        height=500
-    )
-
+    final_chart = (line_chart + points_chart).properties(title="Évolution du Poids vs Objectifs et Moyennes", height=500)
     st.altair_chart(final_chart, use_container_width=True)
 
     with st.expander("Voir l'historique complet des pesées"):
         st.dataframe(df.sort_values(by='Date', ascending=False).reset_index(drop=True))
-
 else:
     st.info("Chargement des données depuis Google Sheets... Assurez-vous que la feuille n'est pas vide et que les autorisations sont correctes.")
