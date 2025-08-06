@@ -214,7 +214,7 @@ with tab2:
                     folder_name = f"{today_str} poids"
                     
                     # Trouver ou créer le dossier journalier
-                    folder_id = find_or_create_folder_id(folder_name, PARENT_FOLDER_ID)
+                    folder_id = find_or_create_folder_id(folder_name, 1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG)
                     
                     # Téléverser la photo
                     file_id = upload_photo(picture, folder_id)
