@@ -19,7 +19,7 @@ TARGET_WEIGHT = 70.0
 
 # --- Connexion à Google Sheets ---
 # Crée la connexion en utilisant les informations stockées dans les Secrets de Streamlit
-conn = st.connection("gcp_service_account", type=GSheetsConnection)
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- Fonctions ---
 @st.cache_data(ttl=60) # Mettre en cache les données pendant 60 secondes pour éviter les appels API excessifs
