@@ -26,7 +26,7 @@ TARGET_WEIGHT = 70.0
 # --- MODIFIABLE : ID du dossier parent dans Google Drive ---
 # Laissez cette variable vide ('') pour enregistrer à la racine,
 # ou mettez l'ID du dossier que vous avez partagé avec le compte de service.
-PARENT_FOLDER_ID = "" # Ex: "1aBcDeFgHiJkLmNoPqRsTuVwXyZ..."
+PARENT_FOLDER_ID = "1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG" # Ex: "1aBcDeFgHiJkLmNoPqRsTuVwXyZ..."
 
 # --- Authentification ---
 # Définir les permissions nécessaires (Sheets ET Drive)
@@ -214,7 +214,7 @@ with tab2:
                     folder_name = f"{today_str} poids"
                     
                     # Trouver ou créer le dossier journalier
-                    folder_id = find_or_create_folder_id(folder_name, 1jiIDL3BOY-1vBjgFXJcDG6Nho1r7w2mG)
+                    folder_id = find_or_create_folder_id(folder_name, PARENT_FOLDER_ID)
                     
                     # Téléverser la photo
                     file_id = upload_photo(picture, folder_id)
