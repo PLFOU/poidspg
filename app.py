@@ -27,13 +27,17 @@ creds = Credentials.from_service_account_info(
 )
 client = gspread.authorize(creds)
 
-# Nom de votre feuille Google Sheets et de l'onglet
-SHEET_NAME = "Suivi poids" #  <-- METTEZ ICI LE NOM DE VOTRE FICHIER GOOGLE SHEETS
-WORKSHEET_NAME = "poids" # <-- METTEZ ICI LE NOM DE L'ONGLET
+# --- OUVERTURE PAR URL (MÉTHODE PLUS FIABLE) ---
+# URL de votre feuille Google Sheets
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1J8sfnafYbCUHmgGZML4DTs02rq_vc0J9nHetcvISYRg/edit?gid=0#gid=0" 
+WORKSHEET_NAME = "poids" # Assurez-vous que le nom de votre onglet est bien "poids"
 
-# Ouvre la feuille de calcul
-spreadsheet = client.open(SHEET_NAME)
-worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+try:
+    spreadsheet = client.open_by_url(SHEET_URL)
+    worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
+except Exception as e:
+    st.error(f"Impossible d'ouvrir la feuille de calcul. Vérifiez l'URL et les permissions de partage. Erreur : {e}")
+    st.stop() # Arrête l'exécution si la feuille n'est pas accessible
 
 # --- Fonctions ---
 @st.cache_data(ttl=60)
@@ -58,6 +62,8 @@ def load_data():
 def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
+        # Formate la date pour la sauvegarde
+        df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%Y-%m-%d')
         # Efface la feuille et la réécrit
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
@@ -65,7 +71,7 @@ def save_data(df_to_save):
     except Exception as e:
         st.error(f"Erreur lors de la sauvegarde des données : {e}")
 
-# --- Interface Utilisateur (le reste du code est identique) ---
+# --- Interface Utilisateur ---
 st.title("🏋️ Dashboard de Suivi de Poids")
 
 df = load_data()
@@ -74,27 +80,27 @@ if not df.empty:
     st.sidebar.header("📝 Ajouter une nouvelle pesée")
     last_date = df['Date'].max().date()
     default_new_date = last_date + pd.Timedelta(days=1)
-
+    
     new_date = st.sidebar.date_input("Date", value=default_new_date)
     new_weight = st.sidebar.number_input("Poids (kg)", min_value=0.0, step=0.1, format="%.2f")
 
     if st.sidebar.button("💾 Enregistrer"):
         new_date_dt = pd.to_datetime(new_date)
-
+        
         if new_date_dt in df['Date'].values:
             st.sidebar.warning("Une entrée existe déjà pour cette date. Elle sera mise à jour.")
             df.loc[df['Date'] == new_date_dt, 'Poids'] = new_weight
         else:
             new_entry = pd.DataFrame([{'Date': new_date_dt, 'Poids': new_weight}])
             df = pd.concat([df, new_entry], ignore_index=True)
-
+        
         df_sorted = df.sort_values(by='Date').reset_index(drop=True)
         save_data(df_sorted)
         st.sidebar.success("Poids enregistré sur Google Sheets !")
         st.rerun()
 
     st.header("📊 Statistiques Clés")
-
+    
     if len(df) > 1:
         col1, col2, col3, col4 = st.columns(4)
         latest_weight = df['Poids'].iloc[-1]
@@ -111,7 +117,7 @@ if not df.empty:
     df['Moyenne 7 jours'] = df['Poids'].rolling(window=7, min_periods=1).mean()
     df_weekly = df.set_index('Date').resample('W-MON', label='left', closed='left')['Poids'].mean().reset_index()
     df_weekly.rename(columns={'Poids': 'Moyenne Hebdomadaire'}, inplace=True)
-
+    
     df_poids = df[['Date', 'Poids']].copy()
     df_poids.rename(columns={'Poids': 'Valeur'}, inplace=True)
     df_poids['Légende'] = 'Poids Journalier'
@@ -150,4 +156,4 @@ if not df.empty:
     with st.expander("Voir l'historique complet des pesées"):
         st.dataframe(df.sort_values(by='Date', ascending=False).reset_index(drop=True))
 else:
-    st.info("Chargement des données depuis Google Sheets... Assurez-vous que la feuille n'est pas vide et que les autorisations sont correctes.")
+    st.warning("Aucune donnée chargée depuis Google Sheets. Vérifiez que la feuille contient des données et que les permissions de partage sont correctes.")
