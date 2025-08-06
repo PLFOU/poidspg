@@ -20,24 +20,22 @@ START_WEIGHT = 85.5
 TARGET_WEIGHT = 70.0
 
 # --- Authentification à Google Sheets ---
-# Utilise st.secrets pour une connexion sécurisée
 scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_info(
     st.secrets["gcp_service_account"], scopes=scopes
 )
 client = gspread.authorize(creds)
 
-# --- OUVERTURE PAR URL (MÉTHODE PLUS FIABLE) ---
-# URL de votre feuille Google Sheets
+# --- OUVERTURE PAR URL ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1J8sfnafYbCUHmgGZML4DTs02rq_vc0J9nHetcvISYRg/edit?gid=0#gid=0" 
-WORKSHEET_NAME = "poids" # Assurez-vous que le nom de votre onglet est bien "poids"
+WORKSHEET_NAME = "poids"
 
 try:
     spreadsheet = client.open_by_url(SHEET_URL)
     worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
 except Exception as e:
     st.error(f"Impossible d'ouvrir la feuille de calcul. Vérifiez l'URL et les permissions de partage. Erreur : {e}")
-    st.stop() # Arrête l'exécution si la feuille n'est pas accessible
+    st.stop()
 
 # --- Fonctions ---
 @st.cache_data(ttl=60)
@@ -51,11 +49,15 @@ def load_data():
 
         df = df.dropna(how="all")
         
-        # On spécifie le format de date exact : jour/mois/année
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
         
-        # On s'assure que le poids est bien un nombre
-        df['Poids'] = pd.to_numeric(df['Poids'], errors='coerce')
+        # --- MODIFICATION ICI ---
+        # On s'assure que la colonne Poids est une chaîne de caractères,
+        # puis on remplace la virgule par un point avant de la convertir en nombre.
+        df['Poids'] = pd.to_numeric(
+            df['Poids'].astype(str).str.replace(',', '.', regex=False), 
+            errors='coerce'
+        )
         
         df = df.dropna(subset=['Date', 'Poids'])
         df = df.sort_values(by='Date').reset_index(drop=True)
@@ -67,9 +69,10 @@ def load_data():
 def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
-        # Formate la date pour la sauvegarde
         df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%d/%m/%Y')
-        # Efface la feuille et la réécrit
+        # Pour la sauvegarde, on remplace le point par une virgule pour la cohérence dans Google Sheets
+        df_to_save['Poids'] = df_to_save['Poids'].astype(str).str.replace('.', ',', regex=False)
+        
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
         st.cache_data.clear()
