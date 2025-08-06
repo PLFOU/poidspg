@@ -194,4 +194,3 @@ with tab2:
                     st.success(f"Photo enregistrée avec succès sur Firebase sous le nom : {file_name}")
                 except Exception as e:
                     st.error(f"Une erreur est survenue lors de l'enregistrement sur Firebase : {e}")
-�
