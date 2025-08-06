@@ -54,16 +54,23 @@ def upload_photo(photo_data, parent_folder_id):
     if not parent_folder_id:
         raise ValueError("L'ID du dossier parent (PARENT_FOLDER_ID) ne peut pas être vide.")
         
-    photo_data.seek(0) # Revenir au début du fichier en mémoire
+    photo_data.seek(0)
     file_name = f"{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
     file_metadata = {
         'name': file_name,
-        'parents': [parent_folder_id] # On utilise directement l'ID du dossier parent
+        'parents': [parent_folder_id]
     }
     media = MediaIoBaseUpload(photo_data, mimetype='image/jpeg', resumable=True)
-    file = drive_service.files().create(body=file_metadata,
-                                        media_body=media,
-                                        fields='id').execute()
+    
+    # --- MODIFICATION ICI ---
+    # On ajoute "supportsAllDrives=True" pour forcer l'API à être plus flexible
+    # sur la gestion de la propriété des fichiers, même sur un Drive personnel.
+    file = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id',
+        supportsAllDrives=True  # Ajout de ce paramètre
+    ).execute()
     return file.get('id')
 
 # --- Fonctions pour Google Sheets ---
@@ -71,24 +78,17 @@ def upload_photo(photo_data, parent_folder_id):
 def load_data():
     """Charge les données depuis la feuille Google Sheets."""
     try:
-        # On lit les données brutes pour éviter une mauvaise interprétation des nombres par gspread
         values = worksheet.get_all_values()
-        if not values or len(values) < 2: # S'il n'y a pas de données ou seulement l'en-tête
+        if not values or len(values) < 2:
             return pd.DataFrame(columns=["Date", "Poids"])
 
-        # On crée le DataFrame manuellement à partir des valeurs brutes
         df = pd.DataFrame(values[1:], columns=values[0])
-        
         df = df.dropna(how="all")
-        
         df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y', errors='coerce')
-        
-        # On remplace la virgule par un point pour une conversion numérique correcte
         df['Poids'] = pd.to_numeric(
             df['Poids'].astype(str).str.replace(',', '.', regex=False), 
             errors='coerce'
         )
-        
         df = df.dropna(subset=['Date', 'Poids'])
         df = df.sort_values(by='Date').reset_index(drop=True)
         return df
@@ -100,9 +100,7 @@ def save_data(df_to_save):
     """Met à jour la feuille Google Sheets."""
     try:
         df_to_save['Date'] = pd.to_datetime(df_to_save['Date']).dt.strftime('%d/%m/%Y')
-        # On formate le poids avec une virgule pour la sauvegarde
         df_to_save['Poids'] = df_to_save['Poids'].map('{:.2f}'.format).str.replace('.', ',', regex=False)
-        
         worksheet.clear()
         set_with_dataframe(worksheet, df_to_save, include_index=False, resize=True)
         st.cache_data.clear()
@@ -193,7 +191,6 @@ with tab1:
 with tab2:
     st.header("📷 Prenez une photo")
     
-    # S'assurer que l'ID du dossier parent est défini
     if not PARENT_FOLDER_ID:
         st.error("Veuillez définir l'ID du dossier parent (PARENT_FOLDER_ID) dans le code pour pouvoir enregistrer des photos.")
     else:
@@ -205,7 +202,6 @@ with tab2:
             if st.button("Valider et Enregistrer la Photo"):
                 with st.spinner("Enregistrement en cours sur Google Drive..."):
                     try:
-                        # Téléverser la photo directement dans le dossier parent
                         file_id = upload_photo(picture, PARENT_FOLDER_ID)
                         st.success(f"Photo enregistrée avec succès dans votre dossier Google Drive !")
                         
